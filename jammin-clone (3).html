@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <title>Narutochka</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; color: #fff; font-family: 'Courier New', monospace; height: 100vh; overflow: hidden; }
+
+        #preload {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            gap: 14px; z-index: 10; background: #000;
+        }
+        #preload h1   { font-size: clamp(22px, 5vw, 42px); letter-spacing: 4px; }
+        #status       { font-size: 14px; color: #555; min-height: 20px; }
+        #start-btn {
+            display: none; margin-top: 8px; padding: 12px 36px;
+            border: 1px solid #fff; background: transparent; color: #fff;
+            font-family: 'Courier New', monospace; font-size: 18px;
+            cursor: pointer; letter-spacing: 3px;
+            transition: background .2s, color .2s;
+        }
+        #start-btn:hover { background: #fff; color: #000; }
+        .sub { font-size: 12px; color: #383838; text-align: center; max-width: 420px; line-height: 1.7; }
+
+        #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; z-index: 1; }
+
+        #data-overlay {
+            position: absolute; inset: 0; z-index: 5;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            pointer-events: none; padding: 16px 8px; gap: 0; overflow: hidden;
+        }
+        #data-overlay span {
+            display: block; background: transparent; color: #fff;
+            text-shadow: 0 0 6px #000, 0 0 12px #000, 1px 1px 3px #000, -1px -1px 3px #000;
+            font-family: 'Courier New', monospace; font-weight: bold;
+            white-space: nowrap; line-height: 1.35;
+            opacity: 0; animation: pop .35s forwards;
+        }
+        @keyframes pop {
+            from { opacity: 0; transform: scale(0.92); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="preload">
+    <h1>⚡ Naruto Video created by Soryuko ⚡</h1>
+    <div id="status">Video starting...</div>
+    <button id="start-btn" onclick="startVideo()">▶ СТАРТ</button>
+    <p class="sub">created by Soryuko</p>
+    <p class="sub">created by Soryuko</p>
+</div>
+
+<video id="video" playsinline></video>
+<div id="data-overlay"></div>
+
+<script>
+// ============================================================
+const VIDEO_URL       = 'video.mp4';
+const REVEAL_START    = 13.166;
+const REVEAL_INTERVAL = 0.5;
+const FONT_START      = 26;
+const FONT_MIN        = 11;
+// ============================================================
+
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('start-btn');
+const preload  = document.getElementById('preload');
+const video    = document.getElementById('video');
+const overlay  = document.getElementById('data-overlay');
+
+const memes = [];
+let step = 0;
+let fontSize = FONT_START;
+
+function add(label, value, suffix = '') {
+    if (value !== null && value !== undefined && value !== '')
+        memes.push(`${label}: ${value}${suffix}`);
+}
+
+async function getGeoData() {
+    // Спробуємо кілька API по черзі
+    const apis = [
+        // 1. ipapi.co — детальна інфа, HTTPS, 1000/день
+        async () => {
+            const d = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(4000) }).then(r => r.json());
+            if (!d.ip) throw new Error('no ip');
+            return {
+                ip:       d.ip,
+                country:  d.country_name,
+                region:   d.region,
+                city:     d.city,
+                zip:      d.postal,
+                lat:      d.latitude,
+                lon:      d.longitude,
+                tz:       d.timezone,
+                isp:      d.org,
+                maps:     `https://maps.google.com/?q=${d.latitude},${d.longitude}`
+            };
+        },
+        // 2. ip-api.com — через HTTPS без ключа не всі поля, але надійний fallback
+        async () => {
+            const d = await fetch('https://freeipapi.com/api/json', { signal: AbortSignal.timeout(4000) }).then(r => r.json());
+            if (!d.ipAddress) throw new Error('no ip');
+            return {
+                ip:      d.ipAddress,
+                country: d.countryName,
+                region:  d.regionName,
+                city:    d.cityName,
+                zip:     d.zipCode,
+                lat:     d.latitude,
+                lon:     d.longitude,
+                tz:      d.timeZone,
+                isp:     null,
+                maps:    `https://maps.google.com/?q=${d.latitude},${d.longitude}`
+            };
+        },
+        // 3. ipwho.is — ще один безкоштовний HTTPS
+        async () => {
+            const d = await fetch('https://ipwho.is/', { signal: AbortSignal.timeout(4000) }).then(r => r.json());
+            if (!d.ip) throw new Error('no ip');
+            return {
+                ip:      d.ip,
+                country: d.country,
+                region:  d.region,
+                city:    d.city,
+                zip:     d.postal,
+                lat:     d.latitude,
+                lon:     d.longitude,
+                tz:      d.timezone?.id,
+                isp:     d.connection?.isp,
+                maps:    `https://maps.google.com/?q=${d.latitude},${d.longitude}`
+            };
+        }
+    ];
+
+    for (const tryApi of apis) {
+        try {
+            return await tryApi();
+        } catch(e) {
+            // пробуємо наступний
+        }
+    }
+    return null;
+}
+
+async function collectData() {
+    const geo = await getGeoData();
+
+    if (geo) {
+        add('🌐 IP Адреса',       geo.ip);
+        add('🗺️ Карта',           geo.maps);
+        add('📍 Місто',           geo.city);
+        add('🏙️ Регіон',          geo.region);
+        add('🌍 Країна',          geo.country);
+        add('📮 ZIP',             geo.zip);
+        add('📡 Координати',      geo.lat && geo.lon ? `${geo.lat}, ${geo.lon}` : null);
+        add('🕐 Часовий пояс',    geo.tz);
+        add('🏢 Провайдер',       geo.isp);
+    } else {
+        add('⚠️ Геолокація', 'не вдалось отримати');
+    }
+
+    add('🕒 Час зараз',          new Date().toLocaleString('uk-UA'));
+    add('🖥️ Платформа',          navigator.platform);
+    add('🌐 Мови',               navigator.languages?.join(', '));
+    add('⚙️ Ядра CPU',           navigator.hardwareConcurrency);
+    add('📺 Роздільна здатність', `${screen.width}×${screen.height}`);
+    add('🎨 Глибина кольору',    screen.pixelDepth, ' біт');
+
+    if (window.outerWidth !== screen.width)
+        add('🪟 Розмір вікна', `${window.outerWidth}×${window.outerHeight}`);
+
+    if (screen.orientation)
+        add('📱 Орієнтація', screen.orientation.type.split('-')[0]);
+
+    add('👆 Сенсорний екран', navigator.maxTouchPoints > 0 ? `Так (${navigator.maxTouchPoints} точок)` : 'Ні');
+    add('🍪 Cookie',          navigator.cookieEnabled ? 'Увімкнені' : 'Вимкнені');
+    add('🕵️ Do Not Track',    navigator.doNotTrack === '1' ? 'Так (але пізно 😏)' : 'Ні');
+    add('🔗 Реферер',         document.referrer || 'Прямий перехід');
+
+    if (window.performance?.memory)
+        add('💾 Пам\'ять браузера', Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024), ' MB');
+
+    try {
+        const gl = document.createElement('canvas').getContext('webgl');
+        if (gl) {
+            const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            if (dbg) {
+                add('🎮 GPU Вендор', gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL));
+                add('🎮 GPU',        gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+            }
+        }
+    } catch(e) {}
+
+    if (navigator.getBattery) {
+        try {
+            const bat = await navigator.getBattery();
+            add('🔋 Батарея', Math.round(bat.level * 100), '%');
+            add('⚡ Зарядка', bat.charging ? 'Підключена 🔌' : 'Від батареї');
+        } catch(e) {}
+    }
+}
+
+function fitFont() {
+    const spans = overlay.querySelectorAll('span');
+    if (!spans.length) return;
+    const maxH = window.innerHeight * 0.96;
+    const maxW = window.innerWidth  * 0.97;
+
+    while (fontSize > FONT_MIN) {
+        const totalH = spans.length * fontSize * 1.35;
+        const longest = Math.max(...[...spans].map(s => s.textContent.length));
+        const approxW = longest * fontSize * 0.6;
+        if (totalH <= maxH && approxW <= maxW) break;
+        fontSize = Math.max(FONT_MIN, fontSize - 1);
+    }
+
+    spans.forEach(s => s.style.fontSize = fontSize + 'px');
+    overlay.style.gap = Math.max(1, Math.floor(fontSize * 0.12)) + 'px';
+}
+
+function addLine(text) {
+    const el = document.createElement('span');
+    el.textContent = text;
+    el.style.fontSize = fontSize + 'px';
+    overlay.appendChild(el);
+    fitFont();
+}
+
+async function init() {
+    const dataPromise = collectData();
+    video.src = VIDEO_URL;
+    video.load();
+    video.oncanplaythrough = async () => {
+        await dataPromise;
+        statusEl.textContent = '✓ Готово!';
+        startBtn.style.display = 'block';
+    };
+    video.onerror = () => {
+        statusEl.textContent = '❌ Помилка відео. Перевір VIDEO_URL.';
+    };
+}
+
+function startVideo() {
+    preload.style.display = 'none';
+    video.style.display   = 'block';
+    video.play();
+
+    const interval = setInterval(() => {
+        const elapsed = video.currentTime - REVEAL_START - step * REVEAL_INTERVAL;
+        if (elapsed > 0 && step < memes.length) {
+            addLine(memes[step]);
+            step++;
+        }
+    }, 10);
+
+    video.onended = () => clearInterval(interval);
+}
+
+init();
+</script>
+</body>
+</html>
